@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicoh-at-github/tauri-v2-schema/main/src/acl.capability.schema.json",
+  "identifier": "default",
+  "description": "Default permissions for PortKill",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "shell:allow-open",
+    "core:window:default",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-close",
+    "core:window:allow-set-focus"
+  ]
+}
