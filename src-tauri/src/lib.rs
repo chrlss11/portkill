@@ -1,6 +1,7 @@
 use serde::Serialize;
 use std::collections::HashMap;
 use std::process::Command;
+use tauri::Manager;
 
 #[derive(Debug, Serialize, Clone)]
 pub struct PortInfo {
