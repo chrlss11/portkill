@@ -2,6 +2,12 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::process::Command;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 #[derive(Debug, Serialize, Clone)]
 pub struct PortInfo {
     pub port: u16,
@@ -9,9 +15,16 @@ pub struct PortInfo {
     pub process_name: String,
 }
 
+fn cmd(program: &str) -> Command {
+    let mut c = Command::new(program);
+    #[cfg(target_os = "windows")]
+    c.creation_flags(CREATE_NO_WINDOW);
+    c
+}
+
 #[tauri::command]
 pub fn list_ports() -> Vec<PortInfo> {
-    let netstat_output = match Command::new("netstat")
+    let netstat_output = match cmd("netstat")
         .args(["-ano", "-p", "tcp"])
         .output()
     {
@@ -69,7 +82,7 @@ pub fn list_ports() -> Vec<PortInfo> {
 fn get_process_names() -> HashMap<u32, String> {
     let mut map = HashMap::new();
 
-    let output = match Command::new("tasklist")
+    let output = match cmd("tasklist")
         .args(["/FO", "CSV", "/NH"])
         .output()
     {
@@ -103,7 +116,7 @@ pub fn kill_port(pid: u32) -> Result<String, String> {
         return Err("Cannot kill system process".to_string());
     }
 
-    let output = Command::new("taskkill")
+    let output = cmd("taskkill")
         .args(["/PID", &pid.to_string(), "/F"])
         .output()
         .map_err(|e| format!("Failed to execute taskkill: {}", e))?;
