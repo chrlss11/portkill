@@ -386,6 +386,15 @@ body {
   color: var(--text-primary);
 }
 
+.action-btn.terminal {
+  color: var(--green);
+}
+
+.action-btn.terminal:hover {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
 .action-btn.kill {
   color: var(--red);
 }
@@ -477,6 +486,15 @@ body {
 
 .detail-action-btn svg {
   flex-shrink: 0;
+}
+
+.detail-action-btn.terminal {
+  color: var(--green);
+  border-color: rgba(16, 185, 129, 0.2);
+}
+.detail-action-btn.terminal:hover {
+  background: var(--green-soft);
+  border-color: var(--green);
 }
 
 /* ═══ Favorites section ═══ */

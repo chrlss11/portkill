@@ -117,6 +117,55 @@ pub fn list_ports() -> Vec<PortInfo> {
 }
 
 #[tauri::command]
+pub fn open_terminal(path: String) -> Result<String, String> {
+    if path.is_empty() || path == "-" {
+        return Err("No working directory available".to_string());
+    }
+    open_terminal_platform(&path)
+}
+
+#[cfg(target_os = "windows")]
+fn open_terminal_platform(path: &str) -> Result<String, String> {
+    // Try Windows Terminal first, fallback to PowerShell
+    let wt = Command::new("cmd")
+        .args(["/c", "start", "wt", "-d", path])
+        .spawn();
+    if wt.is_ok() {
+        return Ok("Opened Windows Terminal".to_string());
+    }
+    // Fallback: PowerShell
+    Command::new("powershell")
+        .args(["-NoExit", "-Command", &format!("Set-Location '{}'", path)])
+        .spawn()
+        .map_err(|e| format!("Failed to open terminal: {}", e))?;
+    Ok("Opened PowerShell".to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn open_terminal_platform(path: &str) -> Result<String, String> {
+    Command::new("open")
+        .args(["-a", "Terminal", path])
+        .spawn()
+        .map_err(|e| format!("Failed to open terminal: {}", e))?;
+    Ok("Opened Terminal".to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn open_terminal_platform(path: &str) -> Result<String, String> {
+    // Try common terminal emulators
+    for term in &["x-terminal-emulator", "gnome-terminal", "konsole", "xterm"] {
+        if Command::new(term)
+            .args(["--working-directory", path])
+            .spawn()
+            .is_ok()
+        {
+            return Ok(format!("Opened {}", term));
+        }
+    }
+    Err("No terminal emulator found".to_string())
+}
+
+#[tauri::command]
 pub fn kill_port(pid: u32) -> Result<String, String> {
     if pid == 0 {
         return Err("Cannot kill system process".to_string());

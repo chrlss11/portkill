@@ -165,6 +165,15 @@
     }
   }
 
+  async function openTerminal(workingDir: string) {
+    if (!workingDir || workingDir === "-") return;
+    try {
+      await invoke("open_terminal", { path: workingDir });
+    } catch (e) {
+      console.error("Failed to open terminal:", e);
+    }
+  }
+
   async function killGroup(group: ProcessGroup) {
     const pids = group.ports.map((p) => p.pid);
     const uniquePids = [...new Set(pids)];
@@ -426,6 +435,11 @@
                   <button class="action-btn" onclick={(e) => { e.stopPropagation(); copyPort(port.port); }} title="Copiar">
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                   </button>
+                  {#if port.working_dir && port.working_dir !== "-"}
+                    <button class="action-btn terminal" onclick={(e) => { e.stopPropagation(); openTerminal(port.working_dir); }} title="Abrir terminal">
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                    </button>
+                  {/if}
                   <button class="action-btn kill" onclick={(e) => { e.stopPropagation(); killPort(port.pid); }} title="Matar">
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
                   </button>
@@ -445,6 +459,7 @@
                       <button class="detail-action-btn" onclick={() => copyPort(port.port)}>Copiar puerto</button>
                       {#if port.working_dir && port.working_dir !== "-"}
                         <button class="detail-action-btn" onclick={() => openFolder(port.working_dir)}>Abrir carpeta</button>
+                        <button class="detail-action-btn terminal" onclick={() => openTerminal(port.working_dir)}>Abrir terminal</button>
                       {/if}
                     </div>
                   </div>
@@ -465,7 +480,7 @@
       &middot; &#8635; 3s
     </div>
     <div class="status-right">
-      <span class="status-version">v0.6.1</span>
+      <span class="status-version">v0.7.0</span>
     </div>
   </div>
 </div>
