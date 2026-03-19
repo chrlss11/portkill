@@ -127,32 +127,45 @@ pub fn focus_parent_terminal(pid: u32) -> Result<String, String> {
 
 #[cfg(target_os = "windows")]
 fn focus_parent_platform(pid: u32) -> Result<String, String> {
-    // Get parent PID via wmic
-    let output = cmd("wmic")
-        .args(["process", "where", &format!("ProcessId={}", pid), "get", "ParentProcessId", "/VALUE"])
-        .output()
-        .map_err(|e| format!("wmic failed: {}", e))?;
-    let text = String::from_utf8_lossy(&output.stdout).to_string();
-    let parent_pid: u32 = text.lines()
-        .filter_map(|l| l.trim().strip_prefix("ParentProcessId="))
-        .filter_map(|v| v.trim().parse().ok())
-        .next()
-        .ok_or("Could not find parent PID")?;
-
-    // Use PowerShell to bring the parent's window to front
-    // This finds the MainWindowHandle of the parent process and activates it
+    // Walk up the parent chain: node.exe → cmd.exe → conhost.exe → WindowsTerminal.exe
+    // We need to find any ancestor with a visible window (MainWindowHandle != 0)
+    // PowerShell script: walks up parents up to 6 levels, tries to focus each
     let ps_script = format!(
-        r#"Add-Type -Name Win -Namespace Native -Member '[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd); [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);'; $p = Get-Process -Id {} -ErrorAction SilentlyContinue; if ($p -and $p.MainWindowHandle -ne 0) {{ [Native.Win]::ShowWindow($p.MainWindowHandle, 9); [Native.Win]::SetForegroundWindow($p.MainWindowHandle) }} else {{ $pp = Get-Process -Id {} -ErrorAction SilentlyContinue; if ($pp -and $pp.MainWindowHandle -ne 0) {{ [Native.Win]::ShowWindow($pp.MainWindowHandle, 9); [Native.Win]::SetForegroundWindow($pp.MainWindowHandle) }} }}"#,
-        parent_pid, pid
+        r#"
+Add-Type -Name Win -Namespace Native -Member '
+[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+'
+$currentPid = {}
+for ($i = 0; $i -lt 6; $i++) {{
+    $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$currentPid" -ErrorAction SilentlyContinue
+    if (-not $proc) {{ break }}
+    $parentPid = $proc.ParentProcessId
+    if (-not $parentPid -or $parentPid -eq 0) {{ break }}
+    $parent = Get-Process -Id $parentPid -ErrorAction SilentlyContinue
+    if ($parent -and $parent.MainWindowHandle -ne 0) {{
+        [Native.Win]::ShowWindow($parent.MainWindowHandle, 9)
+        [Native.Win]::SetForegroundWindow($parent.MainWindowHandle)
+        exit 0
+    }}
+    $currentPid = $parentPid
+}}
+exit 1
+"#,
+        pid
     );
 
-    Command::new("powershell")
+    let output = Command::new("powershell")
         .args(["-NoProfile", "-Command", &ps_script])
         .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
+        .output()
         .map_err(|e| format!("PowerShell failed: {}", e))?;
 
-    Ok(format!("Focused parent terminal (PPID: {})", parent_pid))
+    if output.status.success() {
+        Ok("Focused terminal window".to_string())
+    } else {
+        Err("No se encontro ventana de terminal para este proceso".to_string())
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -179,16 +192,33 @@ pub fn open_terminal(path: String) -> Result<String, String> {
 
 #[cfg(target_os = "windows")]
 fn open_terminal_platform(path: &str) -> Result<String, String> {
-    // Try Windows Terminal first, fallback to PowerShell
-    let wt = Command::new("cmd")
-        .args(["/c", "start", "wt", "-d", path])
-        .spawn();
-    if wt.is_ok() {
+    // Quote the path to handle spaces
+    let quoted = format!("\"{}\"", path);
+
+    // Try Warp first (if installed)
+    if Command::new("cmd")
+        .args(["/c", "start", "", "warp", "--cwd", path])
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .is_ok()
+    {
+        return Ok("Opened Warp".to_string());
+    }
+
+    // Try Windows Terminal
+    if Command::new("cmd")
+        .args(["/c", "start", "", "wt", "-d", &quoted])
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .is_ok()
+    {
         return Ok("Opened Windows Terminal".to_string());
     }
-    // Fallback: PowerShell
-    Command::new("powershell")
-        .args(["-NoExit", "-Command", &format!("Set-Location '{}'", path)])
+
+    // Fallback: PowerShell (open visible, don't close)
+    Command::new("cmd")
+        .args(["/c", "start", "powershell", "-NoExit", "-Command", &format!("cd '{}'", path)])
+        .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .map_err(|e| format!("Failed to open terminal: {}", e))?;
     Ok("Opened PowerShell".to_string())
