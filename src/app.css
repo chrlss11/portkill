@@ -389,10 +389,17 @@ body {
 .action-btn.terminal {
   color: var(--green);
 }
-
 .action-btn.terminal:hover {
   background: var(--green-soft);
   color: var(--green);
+}
+
+.action-btn.logs {
+  color: var(--yellow);
+}
+.action-btn.logs:hover {
+  background: var(--yellow-soft);
+  color: var(--yellow);
 }
 
 .action-btn.kill {
@@ -514,6 +521,15 @@ body {
 .detail-action-btn.terminal:hover {
   background: var(--green-soft);
   border-color: var(--green);
+}
+
+.detail-action-btn.logs {
+  color: var(--yellow);
+  border-color: rgba(245, 158, 11, 0.2);
+}
+.detail-action-btn.logs:hover {
+  background: var(--yellow-soft);
+  border-color: var(--yellow);
 }
 
 /* ═══ Favorites section ═══ */

@@ -121,6 +121,51 @@ pub fn list_ports() -> Vec<PortInfo> {
 }
 
 #[tauri::command]
+pub fn focus_parent_terminal(pid: u32) -> Result<String, String> {
+    focus_parent_platform(pid)
+}
+
+#[cfg(target_os = "windows")]
+fn focus_parent_platform(pid: u32) -> Result<String, String> {
+    // Get parent PID via wmic
+    let output = cmd("wmic")
+        .args(["process", "where", &format!("ProcessId={}", pid), "get", "ParentProcessId", "/VALUE"])
+        .output()
+        .map_err(|e| format!("wmic failed: {}", e))?;
+    let text = String::from_utf8_lossy(&output.stdout).to_string();
+    let parent_pid: u32 = text.lines()
+        .filter_map(|l| l.trim().strip_prefix("ParentProcessId="))
+        .filter_map(|v| v.trim().parse().ok())
+        .next()
+        .ok_or("Could not find parent PID")?;
+
+    // Use PowerShell to bring the parent's window to front
+    // This finds the MainWindowHandle of the parent process and activates it
+    let ps_script = format!(
+        r#"Add-Type -Name Win -Namespace Native -Member '[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd); [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);'; $p = Get-Process -Id {} -ErrorAction SilentlyContinue; if ($p -and $p.MainWindowHandle -ne 0) {{ [Native.Win]::ShowWindow($p.MainWindowHandle, 9); [Native.Win]::SetForegroundWindow($p.MainWindowHandle) }} else {{ $pp = Get-Process -Id {} -ErrorAction SilentlyContinue; if ($pp -and $pp.MainWindowHandle -ne 0) {{ [Native.Win]::ShowWindow($pp.MainWindowHandle, 9); [Native.Win]::SetForegroundWindow($pp.MainWindowHandle) }} }}"#,
+        parent_pid, pid
+    );
+
+    Command::new("powershell")
+        .args(["-NoProfile", "-Command", &ps_script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map_err(|e| format!("PowerShell failed: {}", e))?;
+
+    Ok(format!("Focused parent terminal (PPID: {})", parent_pid))
+}
+
+#[cfg(target_os = "macos")]
+fn focus_parent_platform(_pid: u32) -> Result<String, String> {
+    Err("Not supported on macOS yet".to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn focus_parent_platform(_pid: u32) -> Result<String, String> {
+    Err("Not supported on Linux yet".to_string())
+}
+
+#[tauri::command]
 pub fn open_terminal(path: String) -> Result<String, String> {
     let resolved = if path.is_empty() || path == "-" || path == "." {
         std::env::var("USERPROFILE")

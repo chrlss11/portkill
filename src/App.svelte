@@ -174,6 +174,15 @@
     }
   }
 
+  async function focusLogs(pid: number) {
+    try {
+      await invoke("focus_parent_terminal", { pid });
+    } catch (e) {
+      console.error("Failed to focus terminal:", e);
+      addToast("No se encontro la terminal del proceso", "closed-port");
+    }
+  }
+
   async function killGroup(group: ProcessGroup) {
     const pids = group.ports.map((p) => p.pid);
     const uniquePids = [...new Set(pids)];
@@ -435,8 +444,11 @@
                   <button class="action-btn" onclick={(e) => { e.stopPropagation(); copyPort(port.port); }} title="Copiar">
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                   </button>
-                  <button class="action-btn terminal" onclick={(e) => { e.stopPropagation(); openTerminal(port.working_dir); }} title="Abrir terminal">
+                  <button class="action-btn terminal" onclick={(e) => { e.stopPropagation(); openTerminal(port.working_dir); }} title="Nueva terminal">
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                  </button>
+                  <button class="action-btn logs" onclick={(e) => { e.stopPropagation(); focusLogs(port.pid); }} title="Ver logs (ir a la terminal)">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
                   </button>
                   <button class="action-btn kill" onclick={(e) => { e.stopPropagation(); killPort(port.pid); }} title="Matar">
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
@@ -469,6 +481,7 @@
                         <button class="detail-action-btn" onclick={() => openFolder(port.working_dir)}>Carpeta</button>
                       {/if}
                       <button class="detail-action-btn terminal" onclick={() => openTerminal(port.working_dir)}>Terminal</button>
+                      <button class="detail-action-btn logs" onclick={() => focusLogs(port.pid)}>Ver logs</button>
                     </div>
                   </div>
                 {/if}
@@ -488,7 +501,7 @@
       &middot; &#8635; 3s
     </div>
     <div class="status-right">
-      <span class="status-version">v0.8.0</span>
+      <span class="status-version">v0.9.0</span>
     </div>
   </div>
 </div>

@@ -66,7 +66,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::list_ports,
             commands::kill_port,
-            commands::open_terminal
+            commands::open_terminal,
+            commands::focus_parent_terminal
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
