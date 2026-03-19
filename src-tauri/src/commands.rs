@@ -118,10 +118,14 @@ pub fn list_ports() -> Vec<PortInfo> {
 
 #[tauri::command]
 pub fn open_terminal(path: String) -> Result<String, String> {
-    if path.is_empty() || path == "-" {
-        return Err("No working directory available".to_string());
-    }
-    open_terminal_platform(&path)
+    let resolved = if path.is_empty() || path == "-" || path == "." {
+        std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .unwrap_or_else(|_| ".".to_string())
+    } else {
+        path
+    };
+    open_terminal_platform(&resolved)
 }
 
 #[cfg(target_os = "windows")]
