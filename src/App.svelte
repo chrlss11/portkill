@@ -501,7 +501,7 @@
       &middot; &#8635; 3s
     </div>
     <div class="status-right">
-      <span class="status-version">v0.9.1</span>
+      <span class="status-version">v0.9.2</span>
     </div>
   </div>
 </div>

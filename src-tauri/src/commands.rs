@@ -195,29 +195,17 @@ fn open_terminal_platform(path: &str) -> Result<String, String> {
     // Quote the path to handle spaces
     let quoted = format!("\"{}\"", path);
 
-    // Try Warp first (if installed)
-    if Command::new("cmd")
-        .args(["/c", "start", "", "warp", "--cwd", path])
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-        .is_ok()
-    {
-        return Ok("Opened Warp".to_string());
-    }
-
-    // Try Windows Terminal
-    if Command::new("cmd")
-        .args(["/c", "start", "", "wt", "-d", &quoted])
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-        .is_ok()
-    {
+    // Try Windows Terminal (most common modern terminal)
+    let wt = Command::new("wt")
+        .args(["-d", path])
+        .spawn();
+    if wt.is_ok() {
         return Ok("Opened Windows Terminal".to_string());
     }
 
-    // Fallback: PowerShell (open visible, don't close)
+    // Fallback: PowerShell (open visible, stay open)
     Command::new("cmd")
-        .args(["/c", "start", "powershell", "-NoExit", "-Command", &format!("cd '{}'", path)])
+        .args(["/c", "start", "", "powershell", "-NoExit", "-Command", &format!("cd '{}'", path)])
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .map_err(|e| format!("Failed to open terminal: {}", e))?;
