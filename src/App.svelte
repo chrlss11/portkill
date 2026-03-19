@@ -1,11 +1,15 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { check } from "@tauri-apps/plugin-updater";
+  import { relaunch } from "@tauri-apps/plugin-process";
   import type { PortInfo } from "./lib/types";
 
   let ports: PortInfo[] = $state([]);
   let filter = $state("");
   let killedPids = $state(new Set<number>());
+  let updateAvailable = $state(false);
+  let updating = $state(false);
   let intervalId: number;
 
   const filteredPorts = $derived(
@@ -45,8 +49,34 @@
     getCurrentWindow().hide();
   }
 
+  async function checkForUpdates() {
+    try {
+      const update = await check();
+      if (update) {
+        updateAvailable = true;
+      }
+    } catch (e) {
+      console.error("Update check failed:", e);
+    }
+  }
+
+  async function installUpdate() {
+    try {
+      updating = true;
+      const update = await check();
+      if (update) {
+        await update.downloadAndInstall();
+        await relaunch();
+      }
+    } catch (e) {
+      console.error("Update failed:", e);
+      updating = false;
+    }
+  }
+
   $effect(() => {
     fetchPorts();
+    checkForUpdates();
     intervalId = setInterval(fetchPorts, 3000) as unknown as number;
     return () => clearInterval(intervalId);
   });
@@ -55,13 +85,22 @@
 <div class="app-container">
   <div class="titlebar">
     <div class="titlebar-title">
-      <span class="icon">&#9889;</span>
+      <div class="titlebar-logo">K</div>
       PortKill
     </div>
     <div class="titlebar-controls">
       <button class="titlebar-btn close" onclick={hideWindow} title="Cerrar">&#10005;</button>
     </div>
   </div>
+
+  {#if updateAvailable}
+    <div class="update-bar">
+      <span>Nueva version disponible</span>
+      <button class="update-btn" onclick={installUpdate} disabled={updating}>
+        {updating ? "Actualizando..." : "Actualizar"}
+      </button>
+    </div>
+  {/if}
 
   <div class="search-bar">
     <div class="search-wrapper">
@@ -85,7 +124,7 @@
   <div class="port-list">
     {#if filteredPorts.length === 0}
       <div class="empty-state">
-        <span class="icon">&#128268;</span>
+        <div class="empty-icon">&#128268;</div>
         <p>{filter ? "Sin resultados" : "No hay puertos activos"}</p>
       </div>
     {:else}
@@ -107,10 +146,10 @@
   </div>
 
   <div class="status-bar">
-    <span>
+    <div class="status-left">
       <span class="status-dot"></span>
       {ports.length} puerto{ports.length !== 1 ? "s" : ""} activo{ports.length !== 1 ? "s" : ""}
-    </span>
-    <span>Auto &#8635; 3s</span>
+    </div>
+    <span class="status-refresh">Auto &#8635; 3s</span>
   </div>
 </div>

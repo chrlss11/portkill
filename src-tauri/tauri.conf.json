@@ -30,6 +30,14 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "RWQiA/BisVV1d1Dih/nf7/Sq37SVXmQ6egxaYmo3PXKG5GGWjcISPpk8",
+      "endpoints": [
+        "https://github.com/chrlss11/portkill/releases/latest/download/latest.json"
+      ]
+    }
+  },
   "bundle": {
     "active": true,
     "targets": ["msi", "nsis"],
