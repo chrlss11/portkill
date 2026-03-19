@@ -3,24 +3,42 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { check } from "@tauri-apps/plugin-updater";
   import { relaunch } from "@tauri-apps/plugin-process";
+  import { open } from "@tauri-apps/plugin-shell";
   import type { PortInfo } from "./lib/types";
 
   type ViewMode = "list" | "grouped";
 
   let ports: PortInfo[] = $state([]);
+  let previousPorts: PortInfo[] = $state([]);
   let filter = $state("");
   let killedPids = $state(new Set<number>());
   let updateAvailable = $state(false);
   let updating = $state(false);
   let viewMode: ViewMode = $state("list");
+  let showFavorites = $state(true);
+  let expandedPort: string | null = $state(null);
+  let copiedFeedback = $state(false);
+  let toasts: { id: number; message: string; type: "new-port" | "closed-port" }[] = $state([]);
+  let toastId = 0;
+  let searchInput: HTMLInputElement | undefined = $state(undefined);
   let intervalId: number;
+
+  // Favorites from localStorage
+  let favorites: number[] = $state(
+    JSON.parse(localStorage.getItem("portkill_favorites") || "[]")
+  );
+
+  $effect(() => {
+    localStorage.setItem("portkill_favorites", JSON.stringify(favorites));
+  });
 
   const filteredPorts = $derived(
     ports.filter((p) => {
       const q = filter.toLowerCase();
       return (
         p.port.toString().includes(q) ||
-        p.process_name.toLowerCase().includes(q)
+        p.process_name.toLowerCase().includes(q) ||
+        p.project_name.toLowerCase().includes(q)
       );
     })
   );
@@ -45,11 +63,76 @@
     return result;
   });
 
+  // Favorite ports: active ones + inactive placeholders
+  const favoritePorts = $derived(
+    favorites.map((favPort) => {
+      const active = ports.find((p) => p.port === favPort);
+      return {
+        port: favPort,
+        active: !!active,
+        info: active || null,
+      };
+    })
+  );
+
+  function isFavorite(port: number): boolean {
+    return favorites.includes(port);
+  }
+
+  function toggleFavorite(port: number) {
+    if (favorites.includes(port)) {
+      favorites = favorites.filter((f) => f !== port);
+    } else {
+      favorites = [...favorites, port];
+    }
+  }
+
   async function fetchPorts() {
     try {
-      ports = await invoke<PortInfo[]>("list_ports");
+      const newPorts = await invoke<PortInfo[]>("list_ports");
+
+      // Detect changes for notifications
+      if (previousPorts.length > 0) {
+        const prevSet = new Set(previousPorts.map((p) => p.port));
+        const newSet = new Set(newPorts.map((p) => p.port));
+
+        for (const p of newPorts) {
+          if (!prevSet.has(p.port)) {
+            addToast(`${p.process_name} abrio el puerto :${p.port}`, "new-port");
+            showNotification(`${p.process_name} abrio el puerto :${p.port}`);
+          }
+        }
+        for (const p of previousPorts) {
+          if (!newSet.has(p.port)) {
+            addToast(`Puerto :${p.port} cerrado (${p.process_name})`, "closed-port");
+          }
+        }
+      }
+
+      previousPorts = [...newPorts];
+      ports = newPorts;
     } catch (e) {
       console.error("Failed to fetch ports:", e);
+    }
+  }
+
+  function addToast(message: string, type: "new-port" | "closed-port") {
+    const id = ++toastId;
+    toasts = [...toasts, { id, message, type }];
+    setTimeout(() => {
+      toasts = toasts.filter((t) => t.id !== id);
+    }, 3000);
+  }
+
+  function showNotification(body: string) {
+    if (Notification.permission === "granted") {
+      new Notification("PortKill", { body });
+    } else if (Notification.permission !== "denied") {
+      Notification.requestPermission().then((perm) => {
+        if (perm === "granted") {
+          new Notification("PortKill", { body });
+        }
+      });
     }
   }
 
@@ -78,6 +161,39 @@
 
   function hideWindow() {
     getCurrentWindow().hide();
+  }
+
+  async function openInBrowser(port: number) {
+    try {
+      await open(`http://localhost:${port}`);
+    } catch (e) {
+      console.error("Failed to open browser:", e);
+    }
+  }
+
+  async function copyPort(port: number) {
+    try {
+      await navigator.clipboard.writeText(`localhost:${port}`);
+      copiedFeedback = true;
+      setTimeout(() => {
+        copiedFeedback = false;
+      }, 1200);
+    } catch (e) {
+      console.error("Failed to copy:", e);
+    }
+  }
+
+  async function openFolder(workingDir: string) {
+    if (!workingDir || workingDir === "-") return;
+    try {
+      await open(workingDir);
+    } catch (e) {
+      console.error("Failed to open folder:", e);
+    }
+  }
+
+  function toggleExpand(key: string) {
+    expandedPort = expandedPort === key ? null : key;
   }
 
   async function checkForUpdates() {
@@ -110,7 +226,30 @@
 
   function detectTheme() {
     isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    document.documentElement.setAttribute("data-theme", isDark ? "dark" : "light");
+    document.documentElement.setAttribute(
+      "data-theme",
+      isDark ? "dark" : "light"
+    );
+  }
+
+  // Keyboard shortcuts
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape") {
+      hideWindow();
+    } else if (e.key === "/" && !(e.target instanceof HTMLInputElement)) {
+      e.preventDefault();
+      searchInput?.focus();
+    } else if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+      e.preventDefault();
+      searchInput?.focus();
+    }
+  }
+
+  // Request notification permission on startup
+  function requestNotificationPermission() {
+    if (Notification.permission === "default") {
+      Notification.requestPermission();
+    }
   }
 
   $effect(() => {
@@ -119,6 +258,9 @@
     const handler = () => detectTheme();
     mq.addEventListener("change", handler);
 
+    document.addEventListener("keydown", handleKeydown);
+
+    requestNotificationPermission();
     fetchPorts();
     checkForUpdates();
     intervalId = setInterval(fetchPorts, 3000) as unknown as number;
@@ -126,28 +268,36 @@
     return () => {
       clearInterval(intervalId);
       mq.removeEventListener("change", handler);
+      document.removeEventListener("keydown", handleKeydown);
     };
   });
 </script>
 
 <div class="app-container">
+  <!-- Titlebar -->
   <div class="titlebar">
     <div class="titlebar-title">
-      <div class="titlebar-logo">K</div>
+      <div class="titlebar-logo">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+      </div>
       PortKill
     </div>
     <div class="titlebar-controls">
       <button
         class="titlebar-btn view-toggle"
+        class:active={viewMode === "grouped"}
         onclick={() => (viewMode = viewMode === "list" ? "grouped" : "list")}
         title={viewMode === "list" ? "Agrupar por proceso" : "Vista lista"}
       >
-        {viewMode === "list" ? "\u2630" : "\u2261"}
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
       </button>
-      <button class="titlebar-btn close" onclick={hideWindow} title="Cerrar">&#10005;</button>
+      <button class="titlebar-btn close" onclick={hideWindow} title="Cerrar">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
     </div>
   </div>
 
+  <!-- Update bar -->
   {#if updateAvailable}
     <div class="update-bar">
       <span>Nueva version disponible</span>
@@ -157,6 +307,7 @@
     </div>
   {/if}
 
+  <!-- Search + toggles -->
   <div class="search-bar">
     <div class="search-wrapper">
       <svg class="search-icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -166,18 +317,63 @@
       <input
         class="search-input"
         type="text"
-        placeholder="Filtrar puerto o proceso..."
+        placeholder="Filtrar...  (/)"
         bind:value={filter}
+        bind:this={searchInput}
       />
+    </div>
+    <div class="search-actions">
+      <button
+        class="search-action-btn"
+        class:active={showFavorites}
+        onclick={() => (showFavorites = !showFavorites)}
+        title="Mostrar favoritos"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill={showFavorites ? "currentColor" : "none"} stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+      </button>
     </div>
   </div>
 
+  <!-- Favorites section -->
+  {#if showFavorites && favorites.length > 0}
+    <div class="section-header">
+      <span>Favoritos</span>
+      <span class="count">{favorites.length}</span>
+    </div>
+    <div class="favorites-section">
+      {#each favoritePorts as fav (fav.port)}
+        <div class="fav-row">
+          <span class="fav-status-dot" class:active={fav.active} class:inactive={!fav.active}></span>
+          <span class="fav-port" class:active={fav.active} class:inactive={!fav.active}>:{fav.port}</span>
+          {#if fav.active && fav.info}
+            <span class="fav-info">{fav.info.process_name} {fav.info.project_name !== "-" ? `- ${fav.info.project_name}` : ""}</span>
+          {:else}
+            <span class="fav-info inactive">Inactivo</span>
+          {/if}
+          <div class="fav-actions">
+            {#if fav.active}
+              <button class="action-btn" onclick={() => openInBrowser(fav.port)} title="Abrir en navegador">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+              </button>
+              <button class="action-btn" onclick={() => copyPort(fav.port)} title="Copiar">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              </button>
+            {/if}
+            <button class="action-btn star starred" onclick={() => toggleFavorite(fav.port)} title="Quitar de favoritos">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            </button>
+          </div>
+        </div>
+      {/each}
+    </div>
+    <div class="separator"></div>
+  {/if}
+
+  <!-- Main port list -->
   {#if viewMode === "list"}
-    <div class="port-header">
-      <span>Puerto</span>
-      <span>PID</span>
-      <span>Proceso</span>
-      <span></span>
+    <div class="section-header">
+      <span>Puertos activos</span>
+      <span class="count">{filteredPorts.length}</span>
     </div>
 
     <div class="port-list">
@@ -193,22 +389,77 @@
         </div>
       {:else}
         {#each filteredPorts as port (port.pid + "-" + port.port)}
+          {@const rowKey = `${port.pid}-${port.port}`}
           <div class="port-row" class:killing={killedPids.has(port.pid)}>
-            <span class="port-num">{port.port}</span>
-            <span class="pid">{port.pid}</span>
-            <span class="process">{port.process_name}</span>
-            <button
-              class="kill-btn"
-              class:killed={killedPids.has(port.pid)}
-              onclick={() => killPort(port.pid)}
-            >
-              {killedPids.has(port.pid) ? "Done" : "Kill"}
-            </button>
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="port-row-main" onclick={() => toggleExpand(rowKey)}>
+              <span class="port-num">:{port.port}</span>
+              <span class="process-name">{port.process_name}</span>
+              <div class="port-actions">
+                <button class="action-btn star" class:starred={isFavorite(port.port)} onclick={(e) => { e.stopPropagation(); toggleFavorite(port.port); }} title={isFavorite(port.port) ? "Quitar favorito" : "Agregar favorito"}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill={isFavorite(port.port) ? "currentColor" : "none"} stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                </button>
+                <button class="action-btn" onclick={(e) => { e.stopPropagation(); openInBrowser(port.port); }} title="Abrir en navegador">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                </button>
+                <button class="action-btn" onclick={(e) => { e.stopPropagation(); copyPort(port.port); }} title="Copiar localhost:{port.port}">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                </button>
+                <button class="action-btn kill" onclick={(e) => { e.stopPropagation(); killPort(port.pid); }} title="Matar proceso">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- Second line: project badge -->
+            <div class="port-row-meta">
+              <span class="project-badge" class:has-project={port.project_name !== "-"}>
+                {port.project_name !== "-" ? port.project_name : "-"}
+              </span>
+            </div>
+
+            <!-- Expanded detail -->
+            {#if expandedPort === rowKey}
+              <div class="port-detail">
+                <div class="detail-row">
+                  <span class="detail-label">PID</span>
+                  <span class="detail-value">{port.pid}</span>
+                </div>
+                {#if port.working_dir}
+                  <div class="detail-row">
+                    <span class="detail-label">Dir</span>
+                    <span class="detail-value">{port.working_dir}</span>
+                  </div>
+                {/if}
+                <div class="detail-actions">
+                  <button class="detail-action-btn" onclick={() => openInBrowser(port.port)}>
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/></svg>
+                    Abrir en navegador
+                  </button>
+                  <button class="detail-action-btn" onclick={() => copyPort(port.port)}>
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    Copiar
+                  </button>
+                  {#if port.working_dir && port.working_dir !== "-"}
+                    <button class="detail-action-btn" onclick={() => openFolder(port.working_dir)}>
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                      Abrir carpeta
+                    </button>
+                  {/if}
+                </div>
+              </div>
+            {/if}
           </div>
         {/each}
       {/if}
     </div>
   {:else}
+    <!-- Grouped view -->
+    <div class="section-header">
+      <span>Por proceso</span>
+      <span class="count">{groupedPorts().length}</span>
+    </div>
     <div class="port-list">
       {#if groupedPorts().length === 0}
         <div class="empty-state">
@@ -238,11 +489,11 @@
                   <span class="port-num">:{port.port}</span>
                   <span class="pid">PID {port.pid}</span>
                   <button
-                    class="kill-btn small"
+                    class="kill-btn"
                     class:killed={killedPids.has(port.pid)}
                     onclick={() => killPort(port.pid)}
                   >
-                    {killedPids.has(port.pid) ? "Done" : "Kill"}
+                    {killedPids.has(port.pid) ? "Listo" : "Kill"}
                   </button>
                 </div>
               {/each}
@@ -253,11 +504,29 @@
     </div>
   {/if}
 
+  <!-- Status bar -->
   <div class="status-bar">
     <div class="status-left">
       <span class="status-dot"></span>
-      {ports.length} puerto{ports.length !== 1 ? "s" : ""} activo{ports.length !== 1 ? "s" : ""}
+      {ports.length} activo{ports.length !== 1 ? "s" : ""}
+      &middot; &#8635; 3s
     </div>
-    <span class="status-refresh">Auto &#8635; 3s</span>
+    <div class="status-right">
+      <span class="status-version">v0.5.0</span>
+    </div>
   </div>
 </div>
+
+<!-- Toasts -->
+{#if toasts.length > 0}
+  <div class="toast-container">
+    {#each toasts as toast (toast.id)}
+      <div class="toast {toast.type}">{toast.message}</div>
+    {/each}
+  </div>
+{/if}
+
+<!-- Copied feedback -->
+{#if copiedFeedback}
+  <div class="copied-feedback">Copiado</div>
+{/if}

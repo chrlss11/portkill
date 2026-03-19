@@ -77,8 +77,8 @@ fn show_window_near_tray(window: &tauri::WebviewWindow) {
         let monitor_pos = monitor.position();
         let monitor_size = monitor.size();
         let win_size = window.outer_size().unwrap_or(tauri::PhysicalSize {
-            width: 380,
-            height: 480,
+            width: 420,
+            height: 580,
         });
         let scale = monitor.scale_factor();
 

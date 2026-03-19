@@ -13,6 +13,8 @@ pub struct PortInfo {
     pub port: u16,
     pub pid: u32,
     pub process_name: String,
+    pub working_dir: String,
+    pub project_name: String,
 }
 
 fn cmd(program: &str) -> Command {
@@ -20,6 +22,43 @@ fn cmd(program: &str) -> Command {
     #[cfg(target_os = "windows")]
     c.creation_flags(CREATE_NO_WINDOW);
     c
+}
+
+/// Extract a friendly project name from a path.
+/// If path contains `node_modules`, take the folder before it.
+/// Otherwise take the last meaningful directory segment.
+fn extract_project_name(path: &str) -> String {
+    if path.is_empty() {
+        return "-".to_string();
+    }
+
+    let normalized = path.replace('\\', "/");
+    let parts: Vec<&str> = normalized.split('/').filter(|s| !s.is_empty()).collect();
+
+    // If path contains node_modules, take the segment right before it
+    if let Some(idx) = parts.iter().position(|&s| s == "node_modules") {
+        if idx > 0 {
+            return parts[idx - 1].to_string();
+        }
+    }
+
+    // If path contains .bin or similar, go up
+    if let Some(idx) = parts.iter().position(|&s| s == ".bin") {
+        if idx >= 2 {
+            return parts[idx - 2].to_string();
+        }
+    }
+
+    // Otherwise return the last segment (but skip if it looks like a drive letter or root)
+    if let Some(last) = parts.last() {
+        let name = last.to_string();
+        if name.len() <= 2 && name.ends_with(':') {
+            return "-".to_string();
+        }
+        return name;
+    }
+
+    "-".to_string()
 }
 
 #[tauri::command]
@@ -30,6 +69,21 @@ pub fn list_ports() -> Vec<PortInfo> {
     for port in &mut ports {
         if let Some(name) = process_names.get(&port.pid) {
             port.process_name = name.clone();
+        }
+    }
+
+    // Resolve working directories
+    let mut cwd_cache: HashMap<u32, (String, String)> = HashMap::new();
+    for port in &mut ports {
+        if let Some((wdir, pname)) = cwd_cache.get(&port.pid) {
+            port.working_dir = wdir.clone();
+            port.project_name = pname.clone();
+        } else {
+            let wdir = get_process_cwd(port.pid).unwrap_or_default();
+            let pname = extract_project_name(&wdir);
+            port.working_dir = wdir.clone();
+            port.project_name = pname.clone();
+            cwd_cache.insert(port.pid, (wdir, pname));
         }
     }
 
@@ -49,6 +103,54 @@ pub fn kill_port(pid: u32) -> Result<String, String> {
     }
 
     kill_process(pid)
+}
+
+// ═══ CWD detection ═══
+
+#[cfg(target_os = "windows")]
+fn get_process_cwd(pid: u32) -> Option<String> {
+    // Use wmic to get the ExecutablePath
+    let output = cmd("wmic")
+        .args(["process", "where", &format!("ProcessId={}", pid), "get", "ExecutablePath", "/VALUE"])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout).to_string();
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(path) = line.strip_prefix("ExecutablePath=") {
+            let path = path.trim();
+            if !path.is_empty() {
+                return Some(path.to_string());
+            }
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn get_process_cwd(pid: u32) -> Option<String> {
+    let output = cmd("lsof")
+        .args(["-p", &pid.to_string(), "-Fn"])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout).to_string();
+    // lsof -Fn outputs lines starting with 'n' for name; find cwd (type 'cwd' appears before it)
+    let mut found_cwd = false;
+    for line in text.lines() {
+        if line == "fcwd" {
+            found_cwd = true;
+        } else if found_cwd && line.starts_with('n') {
+            return Some(line[1..].to_string());
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn get_process_cwd(pid: u32) -> Option<String> {
+    std::fs::read_link(format!("/proc/{}/cwd", pid))
+        .ok()
+        .map(|p| p.to_string_lossy().to_string())
 }
 
 // ═══ Windows ═══
@@ -82,6 +184,8 @@ fn list_ports_platform() -> Vec<PortInfo> {
             port,
             pid,
             process_name: "Unknown".to_string(),
+            working_dir: String::new(),
+            project_name: "-".to_string(),
         });
     }
     ports
@@ -155,6 +259,8 @@ fn list_ports_platform() -> Vec<PortInfo> {
                             port,
                             pid: current_pid,
                             process_name: current_name.clone(),
+                            working_dir: String::new(),
+                            project_name: "-".to_string(),
                         });
                     }
                 }
@@ -225,6 +331,8 @@ fn list_ports_platform() -> Vec<PortInfo> {
                 port,
                 pid,
                 process_name: name,
+                working_dir: String::new(),
+                project_name: "-".to_string(),
             });
         }
     }
