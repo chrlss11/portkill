@@ -35,6 +35,11 @@ fn extract_project_name(path: &str) -> String {
     let normalized = path.replace('\\', "/");
     let parts: Vec<&str> = normalized.split('/').filter(|s| !s.is_empty()).collect();
 
+    // Skip known non-project segments
+    let skip = ["dist", "src", "build", "out", ".next", ".nuxt", ".angular",
+                 "node_modules", ".bin", "bin", "lib", "usr", "local", "AppData",
+                 "Roaming", "nvm", "Program Files", "Program Files (x86)"];
+
     // If path contains node_modules, take the segment right before it
     if let Some(idx) = parts.iter().position(|&s| s == "node_modules") {
         if idx > 0 {
@@ -42,20 +47,39 @@ fn extract_project_name(path: &str) -> String {
         }
     }
 
-    // If path contains .bin or similar, go up
+    // If path contains .bin, go up past it and node_modules
     if let Some(idx) = parts.iter().position(|&s| s == ".bin") {
         if idx >= 2 {
             return parts[idx - 2].to_string();
         }
     }
 
-    // Otherwise return the last segment (but skip if it looks like a drive letter or root)
-    if let Some(last) = parts.last() {
-        let name = last.to_string();
-        if name.len() <= 2 && name.ends_with(':') {
-            return "-".to_string();
+    // Walk from the end, skip known non-project names, find the project root
+    for &part in parts.iter().rev() {
+        // Skip file extensions
+        if part.contains('.') && (part.ends_with(".js") || part.ends_with(".ts") || part.ends_with(".exe") || part.ends_with(".mjs")) {
+            continue;
         }
-        return name;
+        // Skip drive letters
+        if part.len() <= 2 && part.ends_with(':') {
+            continue;
+        }
+        // Skip known system/build dirs
+        if skip.iter().any(|&s| part.eq_ignore_ascii_case(s)) {
+            continue;
+        }
+        // Skip version-like segments (v22.0.0)
+        if part.starts_with('v') && part[1..].chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+            continue;
+        }
+        // Skip user home dirs
+        if part == "Users" || part == "home" || part == "root" {
+            continue;
+        }
+        // This looks like a project name
+        if part.len() > 1 {
+            return part.to_string();
+        }
     }
 
     "-".to_string()
@@ -109,13 +133,61 @@ pub fn kill_port(pid: u32) -> Result<String, String> {
 
 #[cfg(target_os = "windows")]
 fn get_process_cwd(pid: u32) -> Option<String> {
-    // Use wmic to get the ExecutablePath
+    // Try PowerShell to get the actual working directory (CommandLine contains the project path)
+    // First attempt: get CommandLine which often contains the project path
     let output = cmd("wmic")
-        .args(["process", "where", &format!("ProcessId={}", pid), "get", "ExecutablePath", "/VALUE"])
+        .args(["process", "where", &format!("ProcessId={}", pid), "get", "CommandLine", "/VALUE"])
         .output()
         .ok()?;
     let text = String::from_utf8_lossy(&output.stdout).to_string();
     for line in text.lines() {
+        let line = line.trim();
+        if let Some(cmdline) = line.strip_prefix("CommandLine=") {
+            let cmdline = cmdline.trim();
+            if !cmdline.is_empty() {
+                // Extract project path from command line
+                // NestJS example: "node C:\Users\user\projects\test\dist\main.js"
+                // Bun example: "bun run --cwd C:\Users\user\projects\myapp dev"
+                // Look for paths that contain common project indicators
+                for part in cmdline.split_whitespace() {
+                    let clean = part.trim_matches('"');
+                    // Skip executable paths (node.exe, bun.exe, etc.)
+                    if clean.ends_with(".exe") || clean.starts_with('-') {
+                        continue;
+                    }
+                    // If it looks like a file path with project structure
+                    if (clean.contains('\\') || clean.contains('/')) && !clean.contains("node_modules\\.bin") {
+                        // Go up from the file to find the project root
+                        let path = std::path::Path::new(clean);
+                        let mut dir = if path.is_file() || clean.contains('.') {
+                            path.parent()
+                        } else {
+                            Some(path)
+                        };
+                        // Walk up past dist/, src/, build/ etc. to find project root
+                        while let Some(d) = dir {
+                            let name = d.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                            if ["dist", "src", "build", "out", ".next", ".nuxt"].contains(&name.as_str()) {
+                                dir = d.parent();
+                            } else {
+                                return Some(d.to_string_lossy().to_string());
+                            }
+                        }
+                    }
+                }
+                // Fallback: return the commandline itself for manual extraction
+                return Some(cmdline.to_string());
+            }
+        }
+    }
+
+    // Fallback: try ExecutablePath
+    let output2 = cmd("wmic")
+        .args(["process", "where", &format!("ProcessId={}", pid), "get", "ExecutablePath", "/VALUE"])
+        .output()
+        .ok()?;
+    let text2 = String::from_utf8_lossy(&output2.stdout).to_string();
+    for line in text2.lines() {
         let line = line.trim();
         if let Some(path) = line.strip_prefix("ExecutablePath=") {
             let path = path.trim();

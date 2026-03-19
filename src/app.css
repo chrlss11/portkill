@@ -644,15 +644,27 @@ body {
 
 .group-port-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   padding: 7px 12px;
-  gap: 10px;
-  transition: background 0.12s;
+  gap: 4px 10px;
+  transition: background 0.12s, opacity 0.4s, transform 0.4s;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
 }
 
 .group-port-row:not(:last-child) { border-bottom: 1px solid var(--border); }
 .group-port-row:hover { background: var(--bg-hover); }
+
+.group-port-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
 
 .group-port-row .port-num {
   color: var(--accent);
@@ -660,13 +672,49 @@ body {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   font-size: 12px;
-  min-width: 50px;
+  min-width: 44px;
+}
+
+.group-port-row .project-badge {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 130px;
 }
 
 .group-port-row .pid {
   color: var(--text-muted);
   font-size: 10px;
-  flex: 1;
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
+.group-port-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.group-port-row:hover .group-port-actions { opacity: 1; }
+
+/* Expanded detail inside group */
+.group-port-row .port-detail {
+  width: 100%;
+  padding: 6px 0 2px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  animation: fadeDetail 0.15s ease;
+}
+@keyframes fadeDetail {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* ═══ Status bar ═══ */
@@ -740,17 +788,39 @@ body {
 
 .empty-state p { font-size: 12px; font-weight: 500; }
 
-/* ═══ Animations ═══ */
-.port-row.killing {
-  opacity: 0;
-  transform: translateX(10px);
-  transition: all 0.25s ease;
+/* ═══ Kill Animation ═══ */
+.port-row.killing,
+.group-port-row.killing {
+  animation: killFlash 0.6s ease forwards;
+  pointer-events: none;
 }
 
-.group-port-row.killing {
-  opacity: 0;
-  transform: translateX(10px);
-  transition: all 0.25s ease;
+@keyframes killFlash {
+  0% {
+    background: var(--red-soft);
+    transform: scale(1);
+    opacity: 1;
+  }
+  20% {
+    background: var(--red-glow);
+    transform: scale(1.02);
+    box-shadow: inset 0 0 0 1px var(--red), 0 0 12px var(--red-glow);
+  }
+  50% {
+    background: var(--green-soft);
+    transform: scale(1);
+    opacity: 0.8;
+  }
+  100% {
+    background: transparent;
+    transform: translateX(40px) scale(0.95);
+    opacity: 0;
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    margin: 0;
+    overflow: hidden;
+  }
 }
 
 /* ═══ Toast notification ═══ */

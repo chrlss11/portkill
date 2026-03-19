@@ -6,15 +6,12 @@
   import { open } from "@tauri-apps/plugin-shell";
   import type { PortInfo } from "./lib/types";
 
-  type ViewMode = "list" | "grouped";
-
   let ports: PortInfo[] = $state([]);
   let previousPorts: PortInfo[] = $state([]);
   let filter = $state("");
   let killedPids = $state(new Set<number>());
   let updateAvailable = $state(false);
   let updating = $state(false);
-  let viewMode: ViewMode = $state("list");
   let showFavorites = $state(true);
   let expandedPort: string | null = $state(null);
   let copiedFeedback = $state(false);
@@ -48,6 +45,17 @@
     ports: PortInfo[];
   }
 
+  // Priority keywords: NestJS and common dev tools show first
+  const priorityKeywords = ["nest", "node", "bun", "vite", "next", "nuxt", "angular", "svelte"];
+
+  function getProcessPriority(name: string): number {
+    const lower = name.toLowerCase();
+    for (let i = 0; i < priorityKeywords.length; i++) {
+      if (lower.includes(priorityKeywords[i])) return i;
+    }
+    return 99;
+  }
+
   const groupedPorts = $derived(() => {
     const groups = new Map<string, PortInfo[]>();
     for (const p of filteredPorts) {
@@ -59,7 +67,13 @@
     for (const [name, ports] of groups) {
       result.push({ name, ports });
     }
-    result.sort((a, b) => a.name.localeCompare(b.name));
+    // Sort: priority processes first (nest, node, bun...), then alphabetical
+    result.sort((a, b) => {
+      const pa = getProcessPriority(a.name);
+      const pb = getProcessPriority(b.name);
+      if (pa !== pb) return pa - pb;
+      return a.name.localeCompare(b.name);
+    });
     return result;
   });
 
@@ -283,14 +297,6 @@
       PortKill
     </div>
     <div class="titlebar-controls">
-      <button
-        class="titlebar-btn view-toggle"
-        class:active={viewMode === "grouped"}
-        onclick={() => (viewMode = viewMode === "list" ? "grouped" : "list")}
-        title={viewMode === "list" ? "Agrupar por proceso" : "Vista lista"}
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
-      </button>
       <button class="titlebar-btn close" onclick={hideWindow} title="Cerrar">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
       </button>
@@ -369,140 +375,87 @@
     <div class="separator"></div>
   {/if}
 
-  <!-- Main port list -->
-  {#if viewMode === "list"}
-    <div class="section-header">
-      <span>Puertos activos</span>
-      <span class="count">{filteredPorts.length}</span>
-    </div>
-
-    <div class="port-list">
-      {#if filteredPorts.length === 0}
-        <div class="empty-state">
-          <div class="empty-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/>
-              <path d="M12 8v4m0 4h.01"/>
-            </svg>
-          </div>
-          <p>{filter ? "Sin resultados" : "No hay puertos activos"}</p>
+  <!-- Port list (grouped by process) -->
+  <div class="section-header">
+    <span>Por proceso</span>
+    <span class="count">{groupedPorts().length}</span>
+  </div>
+  <div class="port-list">
+    {#if groupedPorts().length === 0}
+      <div class="empty-state">
+        <div class="empty-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/>
+            <path d="M12 8v4m0 4h.01"/>
+          </svg>
         </div>
-      {:else}
-        {#each filteredPorts as port (port.pid + "-" + port.port)}
-          {@const rowKey = `${port.pid}-${port.port}`}
-          <div class="port-row" class:killing={killedPids.has(port.pid)}>
-            <!-- svelte-ignore a11y_click_events_have_key_events -->
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="port-row-main" onclick={() => toggleExpand(rowKey)}>
-              <span class="port-num">:{port.port}</span>
-              <span class="process-name">{port.process_name}</span>
-              <div class="port-actions">
-                <button class="action-btn star" class:starred={isFavorite(port.port)} onclick={(e) => { e.stopPropagation(); toggleFavorite(port.port); }} title={isFavorite(port.port) ? "Quitar favorito" : "Agregar favorito"}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill={isFavorite(port.port) ? "currentColor" : "none"} stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-                </button>
-                <button class="action-btn" onclick={(e) => { e.stopPropagation(); openInBrowser(port.port); }} title="Abrir en navegador">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                </button>
-                <button class="action-btn" onclick={(e) => { e.stopPropagation(); copyPort(port.port); }} title="Copiar localhost:{port.port}">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                </button>
-                <button class="action-btn kill" onclick={(e) => { e.stopPropagation(); killPort(port.pid); }} title="Matar proceso">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-                </button>
-              </div>
+        <p>{filter ? "Sin resultados" : "No hay puertos activos"}</p>
+      </div>
+    {:else}
+      {#each groupedPorts() as group (group.name)}
+        <div class="group-card">
+          <div class="group-header">
+            <div class="group-info">
+              <span class="group-name">{group.name}</span>
+              <span class="group-count">{group.ports.length} puerto{group.ports.length !== 1 ? "s" : ""}</span>
             </div>
-
-            <!-- Second line: project badge -->
-            <div class="port-row-meta">
-              <span class="project-badge" class:has-project={port.project_name !== "-"}>
-                {port.project_name !== "-" ? port.project_name : "-"}
-              </span>
-            </div>
-
-            <!-- Expanded detail -->
-            {#if expandedPort === rowKey}
-              <div class="port-detail">
-                <div class="detail-row">
-                  <span class="detail-label">PID</span>
-                  <span class="detail-value">{port.pid}</span>
+            <button class="kill-all-btn" onclick={() => killGroup(group)}>
+              Kill All
+            </button>
+          </div>
+          <div class="group-ports">
+            {#each group.ports as port (port.pid + "-" + port.port)}
+              {@const rowKey = `${port.pid}-${port.port}`}
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div class="group-port-row" class:killing={killedPids.has(port.pid)} onclick={() => toggleExpand(rowKey)}>
+                <div class="group-port-main">
+                  <span class="port-num">:{port.port}</span>
+                  {#if port.project_name && port.project_name !== "-"}
+                    <span class="project-badge has-project">{port.project_name}</span>
+                  {/if}
+                  <span class="pid">PID {port.pid}</span>
                 </div>
-                {#if port.working_dir}
-                  <div class="detail-row">
-                    <span class="detail-label">Dir</span>
-                    <span class="detail-value">{port.working_dir}</span>
+                <div class="group-port-actions">
+                  <button class="action-btn star" class:starred={isFavorite(port.port)} onclick={(e) => { e.stopPropagation(); toggleFavorite(port.port); }} title={isFavorite(port.port) ? "Quitar favorito" : "Agregar favorito"}>
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill={isFavorite(port.port) ? "currentColor" : "none"} stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                  </button>
+                  <button class="action-btn" onclick={(e) => { e.stopPropagation(); openInBrowser(port.port); }} title="Abrir en navegador">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/></svg>
+                  </button>
+                  <button class="action-btn" onclick={(e) => { e.stopPropagation(); copyPort(port.port); }} title="Copiar">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  </button>
+                  <button class="action-btn kill" onclick={(e) => { e.stopPropagation(); killPort(port.pid); }} title="Matar">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                  </button>
+                </div>
+
+                <!-- Expanded detail -->
+                {#if expandedPort === rowKey}
+                  <div class="port-detail" onclick={(e) => e.stopPropagation()}>
+                    {#if port.working_dir && port.working_dir !== "-"}
+                      <div class="detail-row">
+                        <span class="detail-label">Dir</span>
+                        <span class="detail-value">{port.working_dir}</span>
+                      </div>
+                    {/if}
+                    <div class="detail-actions">
+                      <button class="detail-action-btn" onclick={() => openInBrowser(port.port)}>Abrir en navegador</button>
+                      <button class="detail-action-btn" onclick={() => copyPort(port.port)}>Copiar puerto</button>
+                      {#if port.working_dir && port.working_dir !== "-"}
+                        <button class="detail-action-btn" onclick={() => openFolder(port.working_dir)}>Abrir carpeta</button>
+                      {/if}
+                    </div>
                   </div>
                 {/if}
-                <div class="detail-actions">
-                  <button class="detail-action-btn" onclick={() => openInBrowser(port.port)}>
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/></svg>
-                    Abrir en navegador
-                  </button>
-                  <button class="detail-action-btn" onclick={() => copyPort(port.port)}>
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                    Copiar
-                  </button>
-                  {#if port.working_dir && port.working_dir !== "-"}
-                    <button class="detail-action-btn" onclick={() => openFolder(port.working_dir)}>
-                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-                      Abrir carpeta
-                    </button>
-                  {/if}
-                </div>
               </div>
-            {/if}
+            {/each}
           </div>
-        {/each}
-      {/if}
-    </div>
-  {:else}
-    <!-- Grouped view -->
-    <div class="section-header">
-      <span>Por proceso</span>
-      <span class="count">{groupedPorts().length}</span>
-    </div>
-    <div class="port-list">
-      {#if groupedPorts().length === 0}
-        <div class="empty-state">
-          <div class="empty-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/>
-              <path d="M12 8v4m0 4h.01"/>
-            </svg>
-          </div>
-          <p>{filter ? "Sin resultados" : "No hay puertos activos"}</p>
         </div>
-      {:else}
-        {#each groupedPorts() as group (group.name)}
-          <div class="group-card">
-            <div class="group-header">
-              <div class="group-info">
-                <span class="group-name">{group.name}</span>
-                <span class="group-count">{group.ports.length} puerto{group.ports.length !== 1 ? "s" : ""}</span>
-              </div>
-              <button class="kill-all-btn" onclick={() => killGroup(group)}>
-                Kill All
-              </button>
-            </div>
-            <div class="group-ports">
-              {#each group.ports as port (port.pid + "-" + port.port)}
-                <div class="group-port-row" class:killing={killedPids.has(port.pid)}>
-                  <span class="port-num">:{port.port}</span>
-                  <span class="pid">PID {port.pid}</span>
-                  <button
-                    class="kill-btn"
-                    class:killed={killedPids.has(port.pid)}
-                    onclick={() => killPort(port.pid)}
-                  >
-                    {killedPids.has(port.pid) ? "Listo" : "Kill"}
-                  </button>
-                </div>
-              {/each}
-            </div>
-          </div>
-        {/each}
-      {/if}
-    </div>
-  {/if}
+      {/each}
+    {/if}
+  </div>
 
   <!-- Status bar -->
   <div class="status-bar">
@@ -512,7 +465,7 @@
       &middot; &#8635; 3s
     </div>
     <div class="status-right">
-      <span class="status-version">v0.5.0</span>
+      <span class="status-version">v0.6.0</span>
     </div>
   </div>
 </div>
