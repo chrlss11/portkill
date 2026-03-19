@@ -446,6 +446,16 @@
                 <!-- Expanded detail -->
                 {#if expandedPort === rowKey}
                   <div class="port-detail" onclick={(e) => e.stopPropagation()}>
+                    <div class="detail-row">
+                      <span class="detail-label">PID</span>
+                      <span class="detail-value mono">{port.pid}</span>
+                    </div>
+                    {#if port.command_line}
+                      <div class="detail-row">
+                        <span class="detail-label">CMD</span>
+                        <span class="detail-value mono cmd">{port.command_line}</span>
+                      </div>
+                    {/if}
                     {#if port.working_dir && port.working_dir !== "-"}
                       <div class="detail-row">
                         <span class="detail-label">Dir</span>
@@ -453,12 +463,12 @@
                       </div>
                     {/if}
                     <div class="detail-actions">
-                      <button class="detail-action-btn" onclick={() => openInBrowser(port.port)}>Abrir en navegador</button>
-                      <button class="detail-action-btn" onclick={() => copyPort(port.port)}>Copiar puerto</button>
+                      <button class="detail-action-btn" onclick={() => openInBrowser(port.port)}>Navegador</button>
+                      <button class="detail-action-btn" onclick={() => copyPort(port.port)}>Copiar</button>
                       {#if port.working_dir && port.working_dir !== "-"}
-                        <button class="detail-action-btn" onclick={() => openFolder(port.working_dir)}>Abrir carpeta</button>
+                        <button class="detail-action-btn" onclick={() => openFolder(port.working_dir)}>Carpeta</button>
                       {/if}
-                      <button class="detail-action-btn terminal" onclick={() => openTerminal(port.working_dir)}>Abrir terminal</button>
+                      <button class="detail-action-btn terminal" onclick={() => openTerminal(port.working_dir)}>Terminal</button>
                     </div>
                   </div>
                 {/if}
@@ -478,7 +488,7 @@
       &middot; &#8635; 3s
     </div>
     <div class="status-right">
-      <span class="status-version">v0.7.1</span>
+      <span class="status-version">v0.8.0</span>
     </div>
   </div>
 </div>

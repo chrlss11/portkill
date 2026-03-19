@@ -4,4 +4,5 @@ export interface PortInfo {
   process_name: string;
   working_dir: string;
   project_name: string;
+  command_line: string;
 }

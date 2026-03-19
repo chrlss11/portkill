@@ -15,6 +15,7 @@ pub struct PortInfo {
     pub process_name: String,
     pub working_dir: String,
     pub project_name: String,
+    pub command_line: String,
 }
 
 fn cmd(program: &str) -> Command {
@@ -96,18 +97,21 @@ pub fn list_ports() -> Vec<PortInfo> {
         }
     }
 
-    // Resolve working directories
-    let mut cwd_cache: HashMap<u32, (String, String)> = HashMap::new();
+    // Resolve working directories and command lines
+    let mut cwd_cache: HashMap<u32, (String, String, String)> = HashMap::new();
     for port in &mut ports {
-        if let Some((wdir, pname)) = cwd_cache.get(&port.pid) {
+        if let Some((wdir, pname, cmdline)) = cwd_cache.get(&port.pid) {
             port.working_dir = wdir.clone();
             port.project_name = pname.clone();
+            port.command_line = cmdline.clone();
         } else {
             let wdir = get_process_cwd(port.pid).unwrap_or_default();
             let pname = extract_project_name(&wdir);
+            let cmdline = get_command_line(port.pid).unwrap_or_default();
             port.working_dir = wdir.clone();
             port.project_name = pname.clone();
-            cwd_cache.insert(port.pid, (wdir, pname));
+            port.command_line = cmdline.clone();
+            cwd_cache.insert(port.pid, (wdir, pname, cmdline));
         }
     }
 
@@ -278,6 +282,45 @@ fn get_process_cwd(pid: u32) -> Option<String> {
         .map(|p| p.to_string_lossy().to_string())
 }
 
+// ═══ Command Line ═══
+
+#[cfg(target_os = "windows")]
+fn get_command_line(pid: u32) -> Option<String> {
+    let output = cmd("wmic")
+        .args(["process", "where", &format!("ProcessId={}", pid), "get", "CommandLine", "/VALUE"])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout).to_string();
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(cmdline) = line.strip_prefix("CommandLine=") {
+            let cmdline = cmdline.trim();
+            if !cmdline.is_empty() {
+                return Some(cmdline.to_string());
+            }
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn get_command_line(pid: u32) -> Option<String> {
+    let output = cmd("ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if text.is_empty() { None } else { Some(text) }
+}
+
+#[cfg(target_os = "linux")]
+fn get_command_line(pid: u32) -> Option<String> {
+    std::fs::read_to_string(format!("/proc/{}/cmdline", pid))
+        .ok()
+        .map(|s| s.replace('\0', " ").trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 // ═══ Windows ═══
 
 #[cfg(target_os = "windows")]
@@ -311,6 +354,7 @@ fn list_ports_platform() -> Vec<PortInfo> {
             process_name: "Unknown".to_string(),
             working_dir: String::new(),
             project_name: "-".to_string(),
+            command_line: String::new(),
         });
     }
     ports
@@ -386,6 +430,7 @@ fn list_ports_platform() -> Vec<PortInfo> {
                             process_name: current_name.clone(),
                             working_dir: String::new(),
                             project_name: "-".to_string(),
+                            command_line: String::new(),
                         });
                     }
                 }
@@ -458,6 +503,7 @@ fn list_ports_platform() -> Vec<PortInfo> {
                 process_name: name,
                 working_dir: String::new(),
                 project_name: "-".to_string(),
+                command_line: String::new(),
             });
         }
     }
